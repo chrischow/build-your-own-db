@@ -9,6 +9,7 @@ import (
 	"path"
 	"syscall"
 
+	"cc.io/redisk/free"
 	"cc.io/redisk/tree"
 	"golang.org/x/sys/unix"
 )
@@ -21,13 +22,15 @@ type KV struct {
 	// internals
 	fd   int
 	tree tree.BTree
+	free free.FreeList
 	mmap struct {
 		total  int      // mmap size
 		chunks [][]byte // multiple mmaps
 	}
 	page struct {
-		flushed uint64   // database size in no. of pages
-		temp    [][]byte // newly-allocated pages
+		flushed uint64            // database size in no. of pages
+		nappend [][]byte          // newly-allocated pages
+		updates map[uint64][]byte // pending updates
 	}
 	failed bool
 }
@@ -37,12 +40,13 @@ func (db *KV) Inspect() {
 	fmt.Printf("tree.Root: %d\n", db.tree.Root)
 	fmt.Printf("mmap.total: %d\n", db.mmap.total)
 	fmt.Printf("mmap.chunks: %v\n", len(db.mmap.chunks))
-	fmt.Printf("page.flushed: %d\n", db.page.flushed)
-	fmt.Printf("len(page.temp): %d\n", len(db.page.temp))
+	fmt.Printf("Database size in no. of pages: %d\n", db.page.flushed)
+	fmt.Printf("Pages to be appended: %d\n", len(db.page.nappend))
+	fmt.Printf("Pending updates: %d\n", len(db.page.updates))
 }
 
 // Read a page
-func (db *KV) pageRead(pointer uint64) []byte {
+func (db *KV) pageReadFile(pointer uint64) []byte {
 	start := uint64(0)
 	for _, chunk := range db.mmap.chunks {
 		end := start + uint64(len(chunk))/tree.BTREE_PAGE_SIZE
@@ -57,8 +61,8 @@ func (db *KV) pageRead(pointer uint64) []byte {
 
 // Collect new pages from B+tree updates and allocate the page number from the end of the DB. Not written to disk yet.
 func (db *KV) pageAppend(node []byte) uint64 {
-	pointer := db.page.flushed + uint64(len(db.page.temp))
-	db.page.temp = append(db.page.temp, node)
+	pointer := db.page.flushed + uint64(len(db.page.nappend))
+	db.page.nappend = append(db.page.nappend, node)
 	return pointer
 }
 
@@ -159,22 +163,22 @@ func extendMmap(db *KV, size int) error {
 
 func writePages(db *KV) error {
 	// Extend the mmap if required
-	size := (int(db.page.flushed) + len(db.page.temp)) * tree.BTREE_PAGE_SIZE
+	size := (int(db.page.flushed) + len(db.page.nappend)) * tree.BTREE_PAGE_SIZE
 	if err := extendMmap(db, size); err != nil {
 		return err
 	}
 
 	// Write data pages to the file
 	offset := int64(db.page.flushed * tree.BTREE_PAGE_SIZE)
-	if _, err := unix.Pwritev(db.fd, db.page.temp, offset); err != nil {
+	if _, err := unix.Pwritev(db.fd, db.page.nappend, offset); err != nil {
 		return err
 	}
 
 	// Update total DB size
-	db.page.flushed += uint64(len(db.page.temp))
+	db.page.flushed += uint64(len(db.page.nappend))
 
 	// Discard in-memory data
-	db.page.temp = db.page.temp[:0]
+	db.page.nappend = db.page.nappend[:0]
 	return nil
 }
 
@@ -285,7 +289,35 @@ func updateOrRevert(db *KV, meta []byte) error {
 		loadMeta(db, meta)
 
 		// Discard any temp data
-		db.page.temp = db.page.temp[:0]
+		db.page.nappend = db.page.nappend[:0]
 	}
 	return err
+}
+
+func (db *KV) pageAlloc(node []byte) uint64 {
+	// Try free list
+	if ptr := db.free.PopHead(); ptr != 0 {
+		db.page.updates[ptr] = node
+		return ptr
+	}
+
+	return db.pageAppend(node)
+}
+
+func (db *KV) pageWrite(ptr uint64) []byte {
+	if node, ok := db.page.updates[ptr]; ok {
+		return node
+	}
+
+	node := tree.CreateNode()
+	copy(node, db.pageReadFile(ptr))
+	db.page.updates[ptr] = node
+	return node
+}
+
+func (db *KV) pageRead(ptr uint64) []byte {
+	if node, ok := db.page.updates[ptr]; ok {
+		return node
+	}
+	return db.pageReadFile(ptr)
 }

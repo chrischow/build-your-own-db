@@ -72,7 +72,7 @@ func (tree *BTree) Insert(key, val []byte) error {
 
 	// Create first node
 	if tree.Root == 0 {
-		root := createNode()
+		root := CreateNode()
 		root.setHeader(BNODE_LEAF, 2)
 		// Sentinel value: a dummy key to make the tree cover the whole key space
 		nodeAppendKeyValue(root, 0, 0, nil, nil)
@@ -89,7 +89,7 @@ func (tree *BTree) Insert(key, val []byte) error {
 	tree.Del(tree.Root)
 
 	if numSplits > 1 {
-		root := createNode()
+		root := CreateNode()
 		root.setHeader(BNODE_NODE, numSplits)
 
 		for i, childNode := range splitNodes[:numSplits] {
@@ -203,7 +203,7 @@ func treeDelete(tree *BTree, node BNode, key []byte) BNode {
 			return BNode{}
 		}
 
-		newNode := createNode()
+		newNode := CreateNode()
 		leafDelete(newNode, node, idx)
 		return newNode
 	case BNODE_NODE:
@@ -229,12 +229,12 @@ func nodeDelete(tree *BTree, node BNode, idx uint16, key []byte) BNode {
 	// Check if the node with the updated pointers / keys should be merged
 	mergeDirection, sibling := shouldMerge(tree, node, updatedNode, idx)
 
-	newNode := createNode()
+	newNode := CreateNode()
 
 	switch {
 	case mergeDirection < 0:
 		// Merge with left
-		mergedNode := createNode()
+		mergedNode := CreateNode()
 		nodeMerge(mergedNode, sibling, updatedNode)
 
 		// Remove pointer to left
@@ -244,7 +244,7 @@ func nodeDelete(tree *BTree, node BNode, idx uint16, key []byte) BNode {
 		nodeReplaceTwoChildren(newNode, node, idx-1, tree.New(mergedNode), mergedNode.getKey(0))
 	case mergeDirection > 0:
 		// Merge with right
-		mergedNode := createNode()
+		mergedNode := CreateNode()
 		nodeMerge(mergedNode, updatedNode, sibling)
 
 		// Remove pointer to right

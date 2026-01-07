@@ -99,7 +99,7 @@ func (node BNode) nBytes() uint16 {
 }
 
 // Creates an empty node
-func createNode() BNode {
+func CreateNode() BNode {
 	return BNode(make([]byte, BTREE_PAGE_SIZE))
 }
 
@@ -235,7 +235,7 @@ func nodeSplit(old BNode) (uint16, [3]BNode) {
 	}
 
 	left := BNode(make([]byte, 2*BTREE_PAGE_SIZE))
-	right := createNode()
+	right := CreateNode()
 	nodeSplitIntoTwo(left, right, old)
 
 	// If both nodes are within size
@@ -245,8 +245,8 @@ func nodeSplit(old BNode) (uint16, [3]BNode) {
 	}
 
 	// Resplit the left
-	leftLeft := createNode()
-	middle := createNode()
+	leftLeft := CreateNode()
+	middle := CreateNode()
 	nodeSplitIntoTwo(leftLeft, middle, left)
 	utils.Assert(leftLeft.nBytes() <= BTREE_PAGE_SIZE, "failed to split node: first node exceeds page size")
 
